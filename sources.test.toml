@@ -1,0 +1,24 @@
+# Small first test: 3 channels × 2 newest episodes, picked to cover different cases.
+
+[filters]
+min_duration_s = 900
+max_duration_s = 14400
+title_exclude = "(?i)#shorts|\\btrailer\\b|\\bteaser\\b|highlights|\\bclips?\\b"
+
+[[sources]]
+name = "puliyabaazi"          # pure Hindi, 2–3 speakers, ~50–95 min (one and several chunks)
+url = "https://www.youtube.com/channel/UChrTyEYcEiZsDNRDPA38PoA/videos"
+lang = "hi"
+max_episodes = 2
+
+[[sources]]
+name = "dostcast"             # Hinglish, mostly one-on-one, 1–2 h (clean two-speaker case + chunking)
+url = "https://www.youtube.com/channel/UCpeRzRS1b1NvY4og1huE7jw/videos"
+lang = "hi-en"
+max_episodes = 2
+
+[[sources]]
+name = "bharti-tv"            # Hindi, several people, lots of overlap and laughter (hard case)
+url = "https://www.youtube.com/channel/UC-kJeqtRWBKmoe44OVhXH9A/videos"
+lang = "hi"
+max_episodes = 2

@@ -1,0 +1,23 @@
+# Copy to sources.toml and list the channels/playlists to pull. Used by every command via --config.
+
+[filters]
+min_duration_s = 900          # skip clips and shorts
+max_duration_s = 14400        # 4 h
+title_exclude = "(?i)#shorts|\\btrailer\\b|\\bteaser\\b|highlights|\\bclips?\\b"
+
+[download]
+# Only if YouTube starts asking to "confirm you're not a bot". Export cookies once with
+#   uv run yt-dlp --cookies-from-browser chrome --cookies cookies.txt "https://www.youtube.com"
+# A file avoids macOS Keychain prompts that would stall an unattended run.
+# cookies_file = "cookies.txt"
+
+[[sources]]
+name = "example-podcast"
+url = "https://www.youtube.com/@example/videos"   # /videos tab (newest first), a playlist, or the /podcasts tab
+lang = "hi-en"                                     # hint only; YouTube's language metadata is unreliable
+max_episodes = 50                                  # first N in listing order, counted after filters
+
+# [[sources]]
+# name = "another-podcast"
+# url = "https://www.youtube.com/playlist?list=PL..."
+# lang = "hi"

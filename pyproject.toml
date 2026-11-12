@@ -1,0 +1,41 @@
+[project]
+name = "youtube-transcribe"
+version = "0.1.0"
+description = "Fetch YouTube podcasts in disk-bounded batches, transcribe them with Nemotron 3.5 Transcribe, and upload speaker segments to a private HF dataset"
+readme = "README.md"
+authors = [
+    { name = "uday-kapture", email = "uday.sharma@kapturecrm.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "datasets>=5.2.0",
+    "huggingface-hub>=2.4.0",
+    "nemo-3-5-transcribe",
+    "numpy>=2.5.4",
+    "soundfile>=0.14.0",
+    "yt-dlp[default,deno]>=2026.10.26",
+]
+
+[project.scripts]
+youtube-transcribe = "youtube_transcribe:main"
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+nemo-3-5-transcribe = { path = "../nemo-3.5-transcribe", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["F", "E", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
