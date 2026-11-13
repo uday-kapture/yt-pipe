@@ -35,6 +35,9 @@ def _download(catalog: list[dict], args: argparse.Namespace, cookies: str | None
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="youtube-transcribe", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    find_cmd = sub.add_parser("find", help="search YouTube for podcast channels and write a sources file")
+    find_cmd.add_argument("--config", type=Path, required=True, help="queries TOML (see queries.example.toml)")
+    find_cmd.add_argument("--out", type=Path, default=Path("candidates.toml"), help="sources file to write")
     commands = {
         "discover": sub.add_parser("discover", help="list episodes from the sources into catalog.jsonl"),
         "download": sub.add_parser("download", help="fetch catalog episodes and keep them locally"),
@@ -53,6 +56,11 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     config = tomllib.loads(args.config.read_text())
+    if args.command == "find":
+        from .find import FindConfig, find
+
+        find(FindConfig(**config["find"]), Filters(**config.get("filters", {})), args.out)
+        return 0
     cookies = config.get("download", {}).get("cookies_file")
 
     if args.command == "discover":

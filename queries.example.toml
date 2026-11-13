@@ -1,0 +1,23 @@
+# Search terms for `youtube-transcribe find`. Same [filters] as sources.toml.
+
+[filters]
+min_duration_s = 1800         # searching returns more noise than a channel list: ask for long conversations
+max_duration_s = 14400
+title_exclude = "(?i)#shorts|\\btrailer\\b|\\bteaser\\b|highlights|\\bclips?\\b|\\bshorts?\\b"
+
+[find]
+queries = [
+    "hindi podcast interview",
+    "hinglish podcast full episode",
+    "हिंदी पॉडकास्ट",
+    "hindi podcast business founders",
+    "hindi podcast politics economy",
+    "hindi podcast comedy conversation",
+    "hindi podcast bollywood interview",
+    "hindi podcast spirituality philosophy",
+]
+results_per_query = 50        # per query; larger is slower
+min_hits = 2                  # a channel needs this many passing episodes to count as a series
+max_channels = 40
+max_episodes = 20             # written into every source; raise it for channels you trust
+default_lang = "hi-en"        # channels whose titles are mostly Devanagari are written as "hi"

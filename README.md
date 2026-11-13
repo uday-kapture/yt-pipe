@@ -35,7 +35,12 @@ uv sync
 ## Usage
 
 ```bash
-cp sources.example.toml sources.toml          # list your channels/playlists
+# Either list your channels/playlists by hand ...
+cp sources.example.toml sources.toml
+
+# ... or search for them: edit the queries, run `find`, then delete the channels you don't want
+cp queries.example.toml queries.toml
+uv run youtube-transcribe find --config queries.toml --out sources.toml
 
 uv run youtube-transcribe discover --config sources.toml --out data/
 uv run youtube-transcribe run --config sources.toml --out data/ \
