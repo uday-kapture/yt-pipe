@@ -18,6 +18,12 @@ dependencies = [
 
 [project.scripts]
 youtube-transcribe = "youtube_transcribe:main"
+yt-viewer = "youtube_transcribe.viewer:main"
+
+[project.optional-dependencies]
+viewer = [
+    "gradio>=6.32.0",
+]
 
 [build-system]
 requires = ["uv_build>=0.13.6,<0.14.0"]

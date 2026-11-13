@@ -80,11 +80,23 @@ the last moments of the other turn) and `simultaneous_start`.
 
 ## `segments` columns
 
+A row is one **speaker turn**: everything one person says while they hold the floor, including their
+pauses. A listener's "haan" in one of those pauses does not end the turn. Turns longer than 20 s are
+split at word boundaries, and the later pieces get the onset `continue`. A backchannel ("haan", "hmm",
+"achha") or other short interjection is a row of its own. In lively conversation these are almost half
+of all rows, so the duration histogram is dominated by clips under a second. For ASR training, filter
+them out with `onset` and `duration`:
+
+```python
+asr = segments.filter(lambda r: r["onset"] != "backchannel" and r["duration"] >= 1.0)
+```
+
 | Column | |
 | --- | --- |
 | `audio` | the clip, 16 kHz mono FLAC, ≤ 20 s (+0.1 s padding) |
 | `text`, `text_tagged` | the turn's words; the tagged form adds `<int:*>`, `<ev:*>` and `<sty:*>` tags |
-| `speaker`, `onset`, `overlap`, `ipu` | speaker index, turn-taking label, `true` if another speaker is audible in the clip (filter these out for clean single-speaker ASR), IPU id in the chunk's `annotation` |
+| `speaker`, `onset`, `overlap` | speaker index; how the turn started (see onset labels above); `true` if another speaker is audible anywhere in the clip, including a listener's backchannel (filter on it for clean single-speaker ASR) |
+| `ipus` | ids of the IPUs in the chunk's `annotation` that this row covers |
 | `start`, `end`, `duration` | in the **full episode**, in seconds |
 | `pass_agreement`, ids and episode metadata | as in `chunks` |
 

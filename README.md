@@ -58,7 +58,7 @@ often oldest first.
 | File | Subset | One row is |
 | --- | --- | --- |
 | `data/chunks/batch-NNNNN.parquet` | `chunks` (default, master copy) | ≤ 55 min chunk: FLAC audio, `transcript`, `annotation` JSON (IPUs with word timings and turn-taking labels, events, styles, diarization), episode metadata |
-| `data/segments/batch-NNNNN.parquet` | `segments` | ≤ 20 s speaker turn: FLAC clip, `text`, `onset` label, `overlap` flag, episode metadata |
+| `data/segments/batch-NNNNN.parquet` | `segments` | one speaker turn (pauses included; > 20 s split at word boundaries), or a backchannel / short interjection as its own row: FLAC clip, `text`, `onset` label, `overlap` flag, `ipus`, episode metadata |
 | `meta/batch-NNNNN.jsonl` | (not a subset) | one episode: `episode.json` (YouTube metadata, chosen audio format, SponsorBlock regions, chunk offsets) and the raw Transcribe responses, so labels can be recomputed without the GPU |
 
 `load_dataset(repo, "chunks")` or `load_dataset(repo, "segments")`. The full column reference and the

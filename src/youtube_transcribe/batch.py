@@ -28,8 +28,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import soundfile
-from datasets import Audio, Dataset, Features, Value
+from datasets import Audio, Dataset, Features, List, Value
 from huggingface_hub import HfApi
+from nemo_3_5_transcribe.annotate import INLINE_ONSETS
 from nemo_3_5_transcribe.cli import main as nemo_main
 
 from .audio import SAMPLE_RATE
@@ -39,6 +40,8 @@ log = logging.getLogger(__name__)
 
 MAX_CONSECUTIVE_FAILURES = 5
 UPLOAD_TRIES = 3
+MAX_SEGMENT_S = 20.0  # longer turns are split at word boundaries
+SEGMENT_PAD_S = 0.1  # audio kept before the first and after the last word of a segment
 _AUDIO = {"bytes": Value("binary"), "path": Value("string")}  # cast to Audio in write_parquet
 _EPISODE_COLUMNS = ["episode_id", "chunk_id", "video_id", "channel", "channel_id", "title", "upload_date", "source",
                     "lang_hint", "license"]  # fmt: skip
@@ -49,7 +52,7 @@ SEGMENT_FEATURES = Features(
         **{name: Value("string") for name in ["text", "text_tagged", "onset", *_EPISODE_COLUMNS]},
         **_TIMES,
         "speaker": Value("int32"),
-        "ipu": Value("int32"),
+        "ipus": List(Value("int32")),
         "overlap": Value("bool"),
         "pass_agreement": Value("float64"),
     }
@@ -153,8 +156,67 @@ def chunk_record(conversation: dict, chunk: dict, episode: dict) -> dict:
     }
 
 
+def speaker_turns(ipus: list[dict]) -> list[list[dict]]:
+    """Group a chunk's IPUs into turns: an IPU labelled ``continue`` extends its speaker's last floor turn.
+
+    Every other onset (switch, interruption, backchannel, ...) starts a new turn, so a listener's
+    "haan" stays a row of its own and never merges into anyone's turn. Backchannels don't take the
+    floor, so they never become the turn that a later ``continue`` extends.
+    """
+    turns: list[list[dict]] = []
+    floor_turn: dict[int, list[dict]] = {}  # per speaker: their latest turn that held the floor
+    for ipu in ipus:
+        turn = floor_turn.get(ipu["speaker"])
+        if ipu["onset"] == "continue" and turn is not None:
+            turn.append(ipu)
+            continue
+        turns.append([ipu])
+        if ipu["onset"] != "backchannel":
+            floor_turn[ipu["speaker"]] = turns[-1]
+    return turns
+
+
+def turn_segments(turn: list[dict], all_ipus: list[dict], chunk_duration: float) -> list[dict]:
+    """Split one turn into ≤ ``MAX_SEGMENT_S`` pieces at word boundaries; offsets are chunk seconds."""
+    # (text, tagged text, start, end, ipu id) per word; an IPU's trailing tags ride on its last word
+    words = []
+    for ipu in turn:
+        last = len(ipu["words"]) - 1
+        for i, (text, start, end) in enumerate(ipu["words"]):
+            tagged = ipu["word_groups"][i] + (f" {ipu['trailing_tags']}" if i == last and ipu["trailing_tags"] else "")
+            words.append((text, tagged, start, end, ipu["id"]))
+    pieces, first = [], 0
+    for i in range(1, len(words) + 1):
+        if i == len(words) or words[i][3] - words[first][2] > MAX_SEGMENT_S:
+            pieces.append(words[first:i])
+            first = i
+
+    speaker, onset = turn[0]["speaker"], turn[0]["onset"]
+    segments = []
+    for n, piece in enumerate(pieces):
+        start = max(0.0, piece[0][2] - SEGMENT_PAD_S)
+        end = min(chunk_duration, piece[-1][3] + SEGMENT_PAD_S)
+        tagged = [w[1] for w in piece]
+        if n == 0 and onset in INLINE_ONSETS:
+            tagged.insert(0, f"<int:{onset}>")
+        segments.append(
+            {
+                "offset": round(start, 3),
+                "duration": round(end - start, 3),
+                "text": " ".join(w[0] for w in piece),
+                "text_tagged": " ".join(tagged),
+                "speaker": speaker,
+                "onset": onset if n == 0 else "continue",
+                # another speaker is audible somewhere in the clip
+                "overlap": any(o["speaker"] != speaker and o["start"] < end and start < o["end"] for o in all_ipus),
+                "ipus": sorted({w[4] for w in piece}),
+            }
+        )
+    return segments
+
+
 def segment_record(seg: dict, chunk: dict, episode: dict, pass_agreement: float | None) -> dict:
-    """One segments-repo row (without audio) from a nemo ``segments.jsonl`` row; times move to episode time."""
+    """One segments row (without audio) from a ``turn_segments`` piece; times move to episode time."""
     start = round(chunk["start"] + seg["offset"], 3)
     return {
         **_episode_fields(chunk, episode),
@@ -166,7 +228,7 @@ def segment_record(seg: dict, chunk: dict, episode: dict, pass_agreement: float 
         "start": start,
         "end": round(start + seg["duration"], 3),
         "duration": seg["duration"],
-        "ipu": seg["ipu"],
+        "ipus": seg["ipus"],
         "pass_agreement": pass_agreement,
     }
 
@@ -177,15 +239,19 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 # shortcut: a batch's rows sit in memory (~60 MB per audio hour each for chunks and segments, built one after the
 # other); write row groups incrementally if batches grow past ~20 h
-def _chunk_rows(asr: Path, episodes: dict[str, dict]) -> list[dict]:
-    """One row per transcribed chunk: its FLAC file as-is plus the full annotation."""
+def _transcribed_chunks(asr: Path, episodes: dict[str, dict]):
+    """(conversation, chunk, episode) for every chunk nemo annotated successfully."""
     chunks = {c["id"]: (c, ep) for ep in episodes.values() for c in ep["asr_chunks"]}
-    rows = []
     for path in sorted((asr / "conversations").glob("*.json")):
         conversation = json.loads(path.read_text())
-        if conversation["status"] != "ok" or conversation["id"] not in chunks:
-            continue
-        chunk, episode = chunks[conversation["id"]]
+        if conversation["status"] == "ok" and conversation["id"] in chunks:
+            yield conversation, *chunks[conversation["id"]]
+
+
+def _chunk_rows(asr: Path, episodes: dict[str, dict]) -> list[dict]:
+    """One row per transcribed chunk: its FLAC file as-is plus the full annotation."""
+    rows = []
+    for conversation, chunk, episode in _transcribed_chunks(asr, episodes):
         row = chunk_record(conversation, chunk, episode)
         row["audio"] = {"bytes": Path(conversation["audio"]).read_bytes(), "path": f"{chunk['id']}.flac"}
         rows.append(row)
@@ -193,24 +259,22 @@ def _chunk_rows(asr: Path, episodes: dict[str, dict]) -> list[dict]:
 
 
 def _segment_rows(asr: Path, episodes: dict[str, dict]) -> list[dict]:
-    """HF rows with embedded FLAC clips for every segment nemo wrote."""
-    chunks = {c["id"]: (c, ep) for ep in episodes.values() for c in ep["asr_chunks"]}
-    agreement = {c["conversation_id"]: c["pass_agreement"] for c in _read_jsonl(asr / "manifests/conversations.jsonl")}
-    by_audio: dict[str, list[dict]] = defaultdict(list)
-    for seg in _read_jsonl(asr / "manifests/segments.jsonl"):
-        by_audio[seg["audio_filepath"]].append(seg)
-
+    """One row per speaker turn (or ≤ 20 s piece of one) with its FLAC clip."""
     rows = []
-    for audio_path, segments in by_audio.items():
-        data, rate = soundfile.read(audio_path, dtype="int16")  # one chunk (≤ 55 min) at a time
-        for seg in segments:
-            chunk, episode = chunks[seg["conversation_id"]]
-            row = segment_record(seg, chunk, episode, agreement.get(seg["conversation_id"]))
-            clip = io.BytesIO()
-            first = int(seg["offset"] * rate)
-            soundfile.write(clip, data[first : first + int(seg["duration"] * rate)], rate, format="FLAC")
-            row["audio"] = {"bytes": clip.getvalue(), "path": f"{chunk['id']}_{seg['ipu']}_{row['start']:.2f}.flac"}
-            rows.append(row)
+    for conversation, chunk, episode in _transcribed_chunks(asr, episodes):
+        data, rate = soundfile.read(conversation["audio"], dtype="int16")  # one chunk (≤ 55 min) at a time
+        chunk_duration = conversation.get("duration") or len(data) / rate
+        for turn in speaker_turns(conversation["ipus"]):
+            for seg in turn_segments(turn, conversation["ipus"], chunk_duration):
+                row = segment_record(seg, chunk, episode, conversation["pass_agreement"])
+                clip = io.BytesIO()
+                first = int(seg["offset"] * rate)
+                soundfile.write(clip, data[first : first + int(seg["duration"] * rate)], rate, format="FLAC")
+                row["audio"] = {
+                    "bytes": clip.getvalue(),
+                    "path": f"{chunk['id']}_{seg['ipus'][0]}_{row['start']:.2f}.flac",
+                }
+                rows.append(row)
     return rows
 
 
